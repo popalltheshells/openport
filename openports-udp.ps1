@@ -48,30 +48,35 @@ foreach ($p in $ports) {
         $listeners += $udpClient
         Write-Host "Listening on UDP port $p"
 
-        # Receive packets asynchronously
+        # Start async receiver in background
         Start-Job -ScriptBlock {
-            param($client, $port)
-            $remoteEndPoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+            param($port)
+
+            $udpClient = New-Object System.Net.Sockets.UdpClient($port)
+            $remoteEP = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
+
             while ($true) {
                 try {
-                    $receivedBytes = $client.Receive([ref]$remoteEndPoint)
-                    $message = [System.Text.Encoding]::ASCII.GetString($receivedBytes)
-                    Write-Output "Received UDP packet on port $port from $($remoteEndPoint.Address): $message"
+                    $received = $udpClient.Receive([ref]$remoteEP)
+                    $message = [System.Text.Encoding]::ASCII.GetString($received)
+                    Write-Host "📨 Received on UDP port $port from $($remoteEP.Address): $message"
                 } catch {
                     break
                 }
             }
-        } -ArgumentList $udpClient, $p | Out-Null
-    }
-    catch {
-        Write-Warning "Failed to listen on UDP port $p — $($_.Exception.Message)"
+
+            $udpClient.Close()
+        } -ArgumentList $p | Out-Null
+
+    } catch {
+        Write-Warning "❌ Failed to listen on UDP port $p — $($_.Exception.Message)"
     }
 }
 
 if ($listeners.Count -gt 0) {
-    Write-Host "✅ Started UDP listeners on: $($ports -join ', '). Press Ctrl+C to stop."
+    Write-Host "✅ UDP Listeners started on: $($ports -join ', '). Press Ctrl+C to stop."
 } else {
-    Write-Warning "⚠️  No UDP listeners started. Check permissions or port conflicts."
+    Write-Warning "⚠️ No UDP listeners started. Check permissions or port conflicts."
 }
 
 # Keep script alive
