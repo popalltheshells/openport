@@ -1,27 +1,42 @@
 # Save as Open-Ports-Test.ps1 and run in Admin PowerShell
+# This script opens TCP listeners on user-specified ports for testing
 
 # Prompt user for port input
 $portInput = Read-Host "Enter port(s) to open (e.g. 80-85 or 80,85)"
 
-# Parse input
+# Parse input into an integer array
 $ports = @()
+
 if ($portInput -match '^\d+-\d+$') {
     # Range format (e.g. 80-85)
     $split = $portInput -split '-'
     $startPort = [int]$split[0]
     $endPort   = [int]$split[1]
+
+    if ($endPort -lt $startPort) {
+        Write-Error "End port must be greater than or equal to start port."
+        exit
+    }
+
     $ports = $startPort..$endPort
 }
-elseif ($portInput -match '^\d+(,\d+)+$') {
+elseif ($portInput -match '^\d+(,\d+)*$') {
     # Comma-separated format (e.g. 80,85,8080)
     $ports = $portInput -split ',' | ForEach-Object { [int]$_ }
 }
 elseif ($portInput -match '^\d+$') {
-    # Single port (e.g. 80)
+    # Single port
     $ports = @([int]$portInput)
 }
 else {
-    Write-Error "Invalid format. Use range (e.g. 80-85) or list (e.g. 80,85,8080)."
+    Write-Error "Invalid format. Use range (80-85) or list (80,85,8080)."
+    exit
+}
+
+# Remove duplicates and invalid ports
+$ports = $ports | Where-Object { $_ -gt 0 -and $_ -lt 65536 } | Sort-Object -Unique
+if (-not $ports) {
+    Write-Error "No valid ports to open."
     exit
 }
 
@@ -30,11 +45,11 @@ $listeners = @()
 foreach ($p in $ports) {
     try {
         $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $p)
-        $listener.Start()
+        $listener.Start()  # <-- will fail if port is in use or invalid
         $listeners += $listener
         Write-Host "Listening on port $p"
 
-        # Accept connections in background
+        # Accept connections asynchronously
         Start-Job -ScriptBlock {
             param($l, $port)
             while ($true) {
@@ -50,10 +65,15 @@ foreach ($p in $ports) {
         } -ArgumentList $listener, $p | Out-Null
     }
     catch {
-        Write-Warning "Failed to listen on port $p : $_"
+        Write-Warning "Failed to listen on port $p — $($_.Exception.Message)"
     }
 }
 
-Write-Host "Started listeners on port(s): $($ports -join ', '). Press Ctrl+C to stop."
+if ($listeners.Count -gt 0) {
+    Write-Host "✅ Started listeners on: $($ports -join ', '). Press Ctrl+C to stop."
+} else {
+    Write-Warning "⚠️  No listeners started. Check permissions or port conflicts."
+}
+
+# Keep script alive
 while ($true) { Start-Sleep -Seconds 3600 }
-# (Press Ctrl+C to exit; listeners stop when PowerShell exits.)
