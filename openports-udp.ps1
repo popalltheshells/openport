@@ -1,14 +1,14 @@
-# Save as Open-Ports-Test-UDP.ps1 and run in Admin PowerShell
+# Save as Open-UDP-Ports-Test.ps1 and run in Admin PowerShell
 # This script opens UDP listeners on user-specified ports for testing
 
 # Prompt user for port input
-$portInput = Read-Host "Enter port(s) to open (e.g. 80-85 or 80,85)"
+$portInput = Read-Host "Enter port(s) to open (e.g. 53-60 or 53,69,161)"
 
 # Parse input into an integer array
 $ports = @()
 
 if ($portInput -match '^\d+-\d+$') {
-    # Range format (e.g. 80-85)
+    # Range format (e.g. 53-60)
     $split = $portInput -split '-'
     $startPort = [int]$split[0]
     $endPort   = [int]$split[1]
@@ -21,7 +21,7 @@ if ($portInput -match '^\d+-\d+$') {
     $ports = $startPort..$endPort
 }
 elseif ($portInput -match '^\d+(,\d+)*$') {
-    # Comma-separated format (e.g. 80,85,8080)
+    # Comma-separated format (e.g. 53,69,161)
     $ports = $portInput -split ',' | ForEach-Object { [int]$_ }
 }
 elseif ($portInput -match '^\d+$') {
@@ -29,7 +29,7 @@ elseif ($portInput -match '^\d+$') {
     $ports = @([int]$portInput)
 }
 else {
-    Write-Error "Invalid format. Use range (80-85) or list (80,85,8080)."
+    Write-Error "Invalid format. Use range (53-60) or list (53,69,161)."
     exit
 }
 
@@ -40,56 +40,36 @@ if (-not $ports) {
     exit
 }
 
-# Start UDP listeners (each listener runs in its own background job)
+# Start UDP listeners
 $listeners = @()
 foreach ($p in $ports) {
     try {
-        # Quick bind test on main thread to check port availability
-        $testClient = $null
-        try {
-            $testClient = [System.Net.Sockets.UdpClient]::new($p)
-            $testClient.Close()
-        } catch {
-            throw $_
-        }
+        $udpClient = New-Object System.Net.Sockets.UdpClient($p)
+        $listeners += $udpClient
+        Write-Host "Listening on UDP port $p"
 
-        # Start a background job that creates a UdpClient bound to the port and receives packets
+        # Receive packets asynchronously
         Start-Job -ScriptBlock {
-            param($port)
-            try {
-                $udp = [System.Net.Sockets.UdpClient]::new($port)
-            } catch {
-                Write-Output "Failed to bind UDP on port $port inside job: $($_.Exception.Message)"
-                return
-            }
-
-            Write-Output "Listening (UDP) on port $port"
+            param($client, $port)
+            $remoteEndPoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)
             while ($true) {
                 try {
-                    $remoteEP = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any,0)
-                    $bytes = $udp.Receive([ref]$remoteEP)   # Blocking until a datagram arrives
-                    $remote = $remoteEP.ToString()
-                    $len = 0
-                    if ($bytes -ne $null) { $len = $bytes.Length }
-                    Write-Output "UDP packet on port $port from $remote - $len bytes"
+                    $receivedBytes = $client.Receive([ref]$remoteEndPoint)
+                    $message = [System.Text.Encoding]::ASCII.GetString($receivedBytes)
+                    Write-Output "Received UDP packet on port $port from $($remoteEndPoint.Address): $message"
                 } catch {
-                    # If Receive fails (e.g., socket closed), exit the loop
                     break
                 }
             }
-            try { $udp.Close() } catch {}
-        } -ArgumentList $p | Out-Null
-
-        Write-Host "Listening on UDP port $p"
-        $listeners += $p
+        } -ArgumentList $udpClient, $p | Out-Null
     }
     catch {
-        Write-Warning "Failed to listen on port $p — $($_.Exception.Message)"
+        Write-Warning "Failed to listen on UDP port $p — $($_.Exception.Message)"
     }
 }
 
 if ($listeners.Count -gt 0) {
-    Write-Host "✅ Started UDP listeners on: $($listeners -join ', '). Press Ctrl+C to stop."
+    Write-Host "✅ Started UDP listeners on: $($ports -join ', '). Press Ctrl+C to stop."
 } else {
     Write-Warning "⚠️  No UDP listeners started. Check permissions or port conflicts."
 }
